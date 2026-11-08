@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1e1610">
+<title>Château 3D – essai</title>
+<style>
+html,body{margin:0;height:100%;background:#1e1610;color:#f1e6d0;font-family:Georgia,"Times New Roman",serif;overflow:hidden;-webkit-user-select:none;user-select:none}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.top{position:fixed;top:0;left:0;right:0;padding:calc(10px + env(safe-area-inset-top)) 14px 18px;background:linear-gradient(rgba(0,0,0,.6),rgba(0,0,0,0));pointer-events:none}
+.top h1{font-size:19px;color:#e0b45a;margin:0;font-weight:normal;letter-spacing:.3px}
+#info{font-size:12px;color:#e8dcc4;margin-top:4px;line-height:1.4}
+.bot{position:fixed;left:0;right:0;bottom:0;padding:18px 12px calc(12px + env(safe-area-inset-bottom));display:flex;gap:8px;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.65))}
+.btn{flex:1;font:inherit;font-size:15px;padding:12px 6px;border-radius:10px;border:1px solid #e0b45a;background:#e0b45a;color:#2b1d12;text-align:center;cursor:pointer}
+.btn.sec{background:rgba(0,0,0,.45);color:#e0b45a}
+#file{display:none}
+#hint{position:fixed;left:0;right:0;bottom:calc(76px + env(safe-area-inset-bottom));text-align:center;font-size:12px;color:#f1e6d0;opacity:.85;pointer-events:none;transition:opacity .8s;text-shadow:0 1px 3px #000}
+#load{position:fixed;inset:0;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;font-size:16px;color:#e0b45a;background:#1e1610;transition:opacity .7s;text-align:center;padding:24px}
+#load small{color:#b9a888;font-size:13px;max-width:320px}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="top"><h1>Château 3D – essai</h1><div id="info">Chargement…</div></div>
+<div id="hint">Un doigt pour tourner, deux pour zoomer. Touchez pendant la cinématique pour la passer.</div>
+<div class="bot">
+  <button class="btn" id="replay">Rejouer la construction</button>
+  <label class="btn sec" for="file">Ouvrir un .glb</label>
+  <input type="file" id="file">
+</div>
+<div id="load"><div>Préparation du village…</div><small id="loadmsg"></small></div>
+
+<script>
+/* filet de sécurité : si le moteur 3D ne se charge pas (pas de réseau, vieux Safari) */
+window.__ready = false;
+setTimeout(function(){
+  if (!window.__ready) document.getElementById('loadmsg').textContent =
+    "Le moteur 3D ne se charge pas. Vérifiez la connexion internet, puis rechargez la page. Il faut iOS 16.4 ou plus récent.";
+}, 15000);
+window.addEventListener('error', function(e){
+  var m = document.getElementById('loadmsg'); if (m && !window.__ready) m.textContent = 'Erreur : ' + (e.message || e);
+});
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+/* ================= RÉGLAGES ================= */
+const MODEL_URLS = ['assets/3d/chateau.glb', 'chateau.glb'];   // emplacements cherchés sur GitHub
+const CASTLE_SIZE = 12;                                          // taille du château dans la scène
+const POWDER = ['#ff2d7a','#e8178f','#ff4d4d','#ff7a1a','#ffc23d','#c2185b','#ff66b2'];
+const DUST   = ['#cbb994','#a89a80','#d8cbb0'];
+
+/* ================= OUTILS ================= */
+const $ = s => document.querySelector(s);
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeInOut = t => t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const rand = (a, b) => a + Math.random() * (b - a);
+const hexRGB = h => { const n = parseInt(h.slice(1), 16); return [(n>>16&255)/255, (n>>8&255)/255, (n&255)/255]; };
+const fmtMo = b => (b / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+const fmtInt = n => Math.round(n).toLocaleString('fr-FR');
+
+/* bruit simple pour le terrain */
+function hash(x, z){ const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, z){
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
+  const u = xf*xf*(3-2*xf), v = zf*zf*(3-2*zf);
+  const a = hash(xi, zi), b = hash(xi+1, zi), c = hash(xi, zi+1), d = hash(xi+1, zi+1);
+  return lerp(lerp(a, b, u), lerp(c, d, u), v);
+}
+function fbm(x, z){ let s = 0, a = .5, f = 1; for (let i = 0; i < 4; i++){ s += a * vnoise(x*f, z*f); f *= 2; a *= .5; } return s; }
+const smooth = (e0, e1, x) => { const t = clamp01((x - e0) / (e1 - e0)); return t*t*(3-2*t); };
+const pathX = z => 2.6 * Math.sin(z * 0.11);
+function heightAt(x, z){
+  const d = Math.hypot(x, z);
+  const hills = smooth(15, 48, d) * (fbm(x*.045 + 3, z*.045 + 7) * 9 - 1.5);
+  const bumps = smooth(9, 16, d) * (fbm(x*.35, z*.35) - .5) * .35;
+  const onPath = z > 5 && Math.abs(x - pathX(z)) < 1.6 ? .7 : 1;
+  return Math.max(hills * onPath, -1) + bumps;
+}
+
+/* ================= SCÈNE ================= */
+const canvas = $('#c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const PR = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(PR);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
+
+const scene = new THREE.Scene();
+const SKY = 0xa9c9dc;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 55, 140);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
+camera.position.set(0, 30, 46);
+
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x4a5a2a, 0.7));
+const sun = new THREE.DirectionalLight(0xfff0d4, 2.4);
+sun.position.set(-16, 26, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.03;
+scene.add(sun);
+function fitShadow(r){
+  const c = sun.shadow.camera;
+  c.left = -r; c.right = r; c.top = r; c.bottom = -r; c.near = 1; c.far = 90;
+  c.updateProjectionMatrix();
+}
+fitShadow(18);
+
+/* ---- terrain continu (clairière, collines, chemin) ---- */
+(function buildTerrain(){
+  const g = new THREE.PlaneGeometry(260, 260, 180, 180);
+  g.rotateX(-Math.PI / 2);
+  const p = g.attributes.position, col = new Float32Array(p.count * 3);
+  const grassA = hexRGB('#5d7f37'), grassB = hexRGB('#7d9a45'), dirt = hexRGB('#8b6c45'), rock = hexRGB('#8a8170'), dark = hexRGB('#3f5a2a');
+  for (let i = 0; i < p.count; i++){
+    const x = p.getX(i), z = p.getZ(i), h = heightAt(x, z);
+    p.setY(i, h);
+    const n = fbm(x*.08, z*.08), n2 = fbm(x*.5 + 9, z*.5);
+    let c = [lerp(grassA[0], grassB[0], n), lerp(grassA[1], grassB[1], n), lerp(grassA[2], grassB[2], n)];
+    const d = Math.hypot(x, z);
+    if (d > 18 && n2 > .62) c = c.map((v, k) => lerp(v, dark[k], .5));
+    if (h > 3.2) c = c.map((v, k) => lerp(v, rock[k], smooth(3.2, 6, h)));
+    if (z > 5 && Math.abs(x - pathX(z)) < 1.3) c = c.map((v, k) => lerp(v, dirt[k], .85 - n2 * .3));
+    if (d < 9.5) c = c.map((v, k) => lerp(v, dirt[k], .25 * smooth(9.5, 5, d)));
+    col[i*3] = c[0]; col[i*3+1] = c[1]; col[i*3+2] = c[2];
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 }));
+  m.receiveShadow = true;
+  scene.add(m);
+})();
+
+/* ---- forêt et rochers (instanciés pour rester fluide sur iPhone) ---- */
+(function buildForest(){
+  const N = 320, dummy = new THREE.Object3D();
+  const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(.12, .18, 1, 5), new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 1 }), N);
+  const pine  = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), new THREE.MeshStandardMaterial({ color: 0x2f4f2a, roughness: .95 }), N);
+  const leafy = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x4b6b2e, roughness: .95, flatShading: true }), N);
+  let ip = 0, il = 0, it = 0;
+  for (let k = 0; k < 2000 && it < N; k++){
+    const a = Math.random() * Math.PI * 2, d = rand(19, 70);
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (z > 4 && Math.abs(x - pathX(z)) < 3.5) continue;
+    if (fbm(x*.06 + 20, z*.06) < .42 && d < 40) continue;
+    const y = heightAt(x, z), s = rand(.8, 1.5);
+    dummy.rotation.set(0, Math.random() * 6, 0);
+    dummy.position.set(x, y + .6*s, z); dummy.scale.set(s, 1.2*s, s); dummy.updateMatrix(); trunk.setMatrixAt(it++, dummy.matrix);
+    if (Math.random() < .6){
+      dummy.position.set(x, y + 2.4*s, z); dummy.scale.set(1.3*s, 3.4*s, 1.3*s); dummy.updateMatrix(); pine.setMatrixAt(ip++, dummy.matrix);
+    } else {
+      dummy.position.set(x, y + 2.2*s, z); dummy.scale.set(1.5*s, 1.3*s, 1.5*s); dummy.updateMatrix(); leafy.setMatrixAt(il++, dummy.matrix);
+    }
+  }
+  trunk.count = it; pine.count = ip; leafy.count = il;
+  [trunk, pine, leafy].forEach(m => { m.castShadow = true; m.receiveShadow = true; m.instanceMatrix.needsUpdate = true; scene.add(m); });
+  const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x8d8678, roughness: 1, flatShading: true }), 40);
+  for (let i = 0; i < 40; i++){
+    const a = Math.random() * 6.28, d = rand(11, 30), x = Math.cos(a)*d, z = Math.sin(a)*d, s = rand(.3, .9);
+    dummy.position.set(x, heightAt(x, z) + s*.3, z); dummy.rotation.set(rand(0,3), rand(0,3), 0); dummy.scale.set(s, s*.7, s); dummy.updateMatrix(); rocks.setMatrixAt(i, dummy.matrix);
+  }
+  rocks.castShadow = true; rocks.receiveShadow = true; scene.add(rocks);
+})();
+
+/* ================= PARTICULES (poussière de chantier, poudre colorée) ================= */
+const Particles = (() => {
+  const N = 1600;
+  const pos = new Float32Array(N*3), colr = new Float32Array(N*3), alpha = new Float32Array(N), size = new Float32Array(N);
+  const vel = new Float32Array(N*3), life = new Float32Array(N), maxLife = new Float32Array(N), s0 = new Float32Array(N), grow = new Float32Array(N), amax = new Float32Array(N), drag = new Float32Array(N), lift = new Float32Array(N);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aColor', new THREE.BufferAttribute(colr, 3));
+  geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 500);
+  // texture de nuage doux, dessinée dans un canvas
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const cx = cv.getContext('2d');
+  for (let i = 0; i < 7; i++){
+    const x = 32 + rand(-9, 9), y = 32 + rand(-9, 9), r = rand(14, 24);
+    const g = cx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,255,255,.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    cx.fillStyle = g; cx.fillRect(0, 0, 64, 64);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTex: { value: tex }, uScale: { value: 400 } },
+    vertexShader: `
+      attribute vec3 aColor; attribute float aAlpha; attribute float aSize;
+      uniform float uScale; varying vec3 vColor; varying float vAlpha;
+      void main(){
+        vColor = aColor; vAlpha = aAlpha;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aAlpha > 0.001 ? aSize * uScale / max(-mv.z, 0.1) : 0.0;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D uTex; varying vec3 vColor; varying float vAlpha;
+      void main(){
+        float a = texture2D(uTex, gl_PointCoord).a * vAlpha;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(vColor, a);
+      }`,
+    transparent: true, depthWrite: false, toneMapped: false, fog: false
+  });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false; points.renderOrder = 10;
+  scene.add(points);
+  let next = 0;
+  function spawn(o){
+    const i = next; next = (next + 1) % N;
+    pos[i*3] = o.x; pos[i*3+1] = o.y; pos[i*3+2] = o.z;
+    vel[i*3] = o.vx; vel[i*3+1] = o.vy; vel[i*3+2] = o.vz;
+    const c = hexRGB(o.color); colr[i*3] = c[0]; colr[i*3+1] = c[1]; colr[i*3+2] = c[2];
+    life[i] = 0; maxLife[i] = o.life; s0[i] = o.size; grow[i] = o.grow; amax[i] = o.alpha; drag[i] = o.drag; lift[i] = o.lift;
+    size[i] = o.size; alpha[i] = 0;
+  }
+  function update(dt){
+    for (let i = 0; i < N; i++){
+      if (maxLife[i] <= 0) continue;
+      life[i] += dt;
+      const t = life[i] / maxLife[i];
+      if (t >= 1){ maxLife[i] = 0; alpha[i] = 0; continue; }
+      const k = Math.exp(-drag[i] * dt);
+      vel[i*3] *= k; vel[i*3+1] = vel[i*3+1] * k + lift[i] * dt; vel[i*3+2] *= k;
+      pos[i*3] += vel[i*3] * dt; pos[i*3+1] += vel[i*3+1] * dt; pos[i*3+2] += vel[i*3+2] * dt;
+      size[i] = s0[i] * (1 + grow[i] * Math.sqrt(t));
+      alpha[i] = amax[i] * Math.min(1, t * 8) * (1 - Math.pow(t, 1.6));
+    }
+    geo.attributes.position.needsUpdate = true; geo.attributes.aColor.needsUpdate = true;
+    geo.attributes.aAlpha.needsUpdate = true; geo.attributes.aSize.needsUpdate = true;
+  }
+  function clear(){ maxLife.fill(0); alpha.fill(0); }
+  function setScale(h){ mat.uniforms.uScale.value = h * PR / (2 * Math.tan(camera.fov * Math.PI / 360)); }
+  return { spawn, update, clear, setScale };
+})();
+
+/* ================= CHÂTEAU ================= */
+const clipCastle = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1000);   // ne dessine que sous la hauteur « construite »
+const clipScaff  = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1000);
+let castle = null, scaffold = null, scaffMats = [], bounds = null, flagObj = null;
+
+function prepareMaterials(root){
+  let tris = 0;
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true;
+    const g = o.geometry;
+    tris += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+    const fix = m => { m = m.clone(); m.clippingPlanes = [clipCastle]; m.clipShadows = true; return m; };
+    o.material = Array.isArray(o.material) ? o.material.map(fix) : fix(o.material);
+  });
+  return tris;
+}
+
+function placeCastle(model){
+  const wrap = new THREE.Group();
+  wrap.add(model);
+  model.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const s = CASTLE_SIZE / Math.max(size.x, size.z, size.y * 0.9, 1e-6);
+  model.scale.multiplyScalar(s);
+  model.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(model);
+  const c = box.getCenter(new THREE.Vector3());
+  model.position.x -= c.x; model.position.z -= c.z; model.position.y -= box.min.y;
+  model.updateMatrixWorld(true);
+  bounds = new THREE.Box3().setFromObject(model);
+  return wrap;
+}
+
+function disposeTree(o){
+  o.traverse(n => {
+    if (n.geometry) n.geometry.dispose();
+    const ms = n.material ? (Array.isArray(n.material) ? n.material : [n.material]) : [];
+    ms.forEach(m => { for (const k in m){ const v = m[k]; if (v && v.isTexture) v.dispose(); } m.dispose(); });
+  });
+}
+
+function setCastle(model, label, bytes){
+  if (castle){ scene.remove(castle); disposeTree(castle); }
+  if (scaffold){ scene.remove(scaffold); disposeTree(scaffold); }
+  const tris = prepareMaterials(model);
+  castle = placeCastle(model);
+  flagObj = castle.getObjectByName('flag') || null;
+  scene.add(castle);
+  scaffold = buildScaffold(bounds);
+  scene.add(scaffold);
+  const sz = bounds.getSize(new THREE.Vector3());
+  fitShadow(Math.max(sz.x, sz.z) * 0.9 + 6);
+  modelInfo = label + (bytes ? ' · ' + fmtMo(bytes) : '') + ' · ' + fmtInt(tris) + ' triangles';
+  showInfo();
+  startCinematic();
+}
+
+/* château provisoire, utilisé tant qu'aucun chateau.glb n'est trouvé */
+function placeholderCastle(){
+  const g = new THREE.Group();
+  const stone = new THREE.MeshStandardMaterial({ color: 0xbdb5a5, roughness: .92 });
+  const stone2 = new THREE.MeshStandardMaterial({ color: 0xa69e8f, roughness: .95 });
+  const roof = new THREE.MeshStandardMaterial({ color: 0x4a5a78, roughness: .7 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5b4030, roughness: .9 });
+  const blue = new THREE.MeshStandardMaterial({ color: 0x2a5ca8, roughness: .8, side: THREE.DoubleSide });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  const W = 10, H = 2.4, T = .6;
+  add(new THREE.BoxGeometry(W + 1.2, .5, W + 1.2), stone2, 0, .25, 0);
+  [[0, -W/2, W, T], [0, W/2, W, T], [-W/2, 0, T, W], [W/2, 0, T, W]].forEach(([x, z, w, d]) => {
+    add(new THREE.BoxGeometry(w, H, d), stone, x, .5 + H/2, z);
+    const n = Math.round(Math.max(w, d) / .8);
+    for (let i = 0; i < n; i++){
+      const t = (i + .5) / n - .5;
+      if (i % 2) add(new THREE.BoxGeometry(.4, .4, .4), stone, x + (w > d ? t*w : 0), .5 + H + .2, z + (w > d ? 0 : t*d));
+    }
+  });
+  add(new THREE.BoxGeometry(1.8, 1.7, .2), wood, 0, 1.35, W/2 + .32);
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {
+    const x = sx * W/2, z = sz * W/2;
+    add(new THREE.CylinderGeometry(1.15, 1.25, 4, 14), stone, x, .5 + 2, z);
+    add(new THREE.ConeGeometry(1.45, 2.2, 14), roof, x, .5 + 4 + 1.1, z);
+  });
+  add(new THREE.BoxGeometry(4.2, 5.5, 4.2), stone, 0, .5 + 2.75, -.8);
+  add(new THREE.ConeGeometry(3.3, 2.6, 4), roof, 0, .5 + 5.5 + 1.3, -.8).rotation.y = Math.PI / 4;
+  add(new THREE.CylinderGeometry(.05, .05, 2.4, 6), wood, 0, .5 + 8.1 + .2, -.8);
+  const flag = add(new THREE.PlaneGeometry(1.2, .7), blue, .62, .5 + 8.9, -.8);
+  flag.name = 'flag';
+  for (let i = 0; i < 4; i++){
+    const hx = rand(-3, 3), hz = rand(-3.5, 3.5);
+    if (Math.abs(hx) < 2.4 && hz < 1.5) continue;
+    add(new THREE.BoxGeometry(1.6, 1.2, 1.4), stone2, hx, .5 + .6, hz);
+    add(new THREE.ConeGeometry(1.2, .9, 4), new THREE.MeshStandardMaterial({ color: 0xb5523b, roughness: .8 }), hx, .5 + 1.65, hz).rotation.y = Math.PI / 4;
+  }
+  return g;
+}
+
+/* échafaudage en bois autour du château */
+function buildScaffold(b){
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8a6a45, roughness: .9, transparent: true, opacity: 1, clippingPlanes: [clipScaff], clipShadows: true });
+  scaffMats = [mat];
+  const pad = .45, x0 = b.min.x - pad, x1 = b.max.x + pad, z0 = b.min.z - pad, z1 = b.max.z + pad;
+  const H = (b.max.y - b.min.y) * 1.02, step = 1.6, lvl = 1.35;
+  const poles = [];
+  const edge = (ax, az, bx, bz) => {
+    const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(L / step));
+    for (let i = 0; i <= n; i++) poles.push([lerp(ax, bx, i/n), lerp(az, bz, i/n)]);
+  };
+  edge(x0, z0, x1, z0); edge(x1, z0, x1, z1); edge(x1, z1, x0, z1); edge(x0, z1, x0, z0);
+  const levels = Math.max(1, Math.floor(H / lvl));
+  const beams = 4 * (levels + 1) * 2 + 8;
+  const poleMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(.5, .5, 1, 5), mat, poles.length);
+  const boxMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, beams);
+  const d = new THREE.Object3D();
+  poles.forEach(([x, z], i) => { d.position.set(x, H/2, z); d.rotation.set(0, 0, 0); d.scale.set(.11, H, .11); d.updateMatrix(); poleMesh.setMatrixAt(i, d.matrix); });
+  let k = 0;
+  const beam = (cx, cy, cz, sx, sy, sz) => { if (k >= beams) return; d.position.set(cx, cy, cz); d.rotation.set(0, 0, 0); d.scale.set(sx, sy, sz); d.updateMatrix(); boxMesh.setMatrixAt(k++, d.matrix); };
+  for (let l = 1; l <= levels; l++){
+    const y = l * lvl;
+    beam((x0+x1)/2, y, z0, x1-x0, .1, .1); beam((x0+x1)/2, y, z1, x1-x0, .1, .1);
+    beam(x0, y, (z0+z1)/2, .1, .1, z1-z0); beam(x1, y, (z0+z1)/2, .1, .1, z1-z0);
+    beam((x0+x1)/2, y + .06, z0 + .28, x1-x0, .05, .55); beam((x0+x1)/2, y + .06, z1 - .28, x1-x0, .05, .55);
+    beam(x0 + .28, y + .06, (z0+z1)/2, .55, .05, z1-z0); beam(x1 - .28, y + .06, (z0+z1)/2, .55, .05, z1-z0);
+  }
+  boxMesh.count = k;
+  [poleMesh, boxMesh].forEach(m => { m.castShadow = true; m.receiveShadow = true; m.instanceMatrix.needsUpdate = true; g.add(m); });
+  return g;
+}
+
+/* ================= CHARGEMENT DU MODÈLE ================= */
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/');
+const loader = new GLTFLoader();
+loader.setDRACOLoader(draco);
+loader.setMeshoptDecoder(MeshoptDecoder);
+
+function parseGLB(buffer){
+  return new Promise((ok, ko) => loader.parse(buffer, '', g => ok(g.scene), ko));
+}
+
+async function loadFromSite(){
+  for (const url of MODEL_URLS){
+    try {
+      const r = await fetch(url, { cache: 'no-cache' });
+      if (!r.ok) continue;
+      const buf = await r.arrayBuffer();
+      if (buf.byteLength < 100) continue;
+      const model = await parseGLB(buf);
+      setCastle(model, url, buf.byteLength);
+      return;
+    } catch (e) { console.warn('Modèle non chargé :', url, e); }
+  }
+  setCastle(placeholderCastle(), 'Château provisoire (aucun chateau.glb trouvé dans assets/3d/)', 0);
+}
+
+$('#file').addEventListener('change', async ev => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  $('#info').textContent = 'Lecture de ' + f.name + '…';
+  try {
+    const buf = await f.arrayBuffer();
+    const model = await parseGLB(buf);
+    setCastle(model, f.name, buf.byteLength);
+  } catch (e) {
+    $('#info').textContent = 'Ce fichier ne se lit pas comme un modèle .glb (' + (e && e.message ? e.message : e) + ')';
+  }
+  ev.target.value = '';
+});
+
+/* ================= CAMÉRA, COMMANDES, CINÉMATIQUE ================= */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = .08;
+controls.minPolarAngle = .25;
+controls.maxPolarAngle = Math.PI * .44;
+controls.minDistance = 8;
+controls.maxDistance = 75;
+controls.screenSpacePanning = false;
+controls.autoRotateSpeed = .9;
+controls.enabled = false;
+let idleTimer = null;
+controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleTimer); hideHint(); });
+controls.addEventListener('end', () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!cine.active) controls.autoRotate = true; }, 6000); });
+controls.addEventListener('change', () => {
+  const t = controls.target, r = Math.hypot(t.x, t.z);
+  if (r > 14){ t.x *= 14 / r; t.z *= 14 / r; }
+  t.y = Math.max(0, Math.min(t.y, 8));
+});
+
+const cine = { active: false, t: 0, a0: 0, burst: false, burst2: false, ended: false };
+const BUILD_START = .8, BUILD_END = 5.6, BURST_AT = 5.9, CINE_END = 9.5;
+let H = 6, R1 = 28;
+
+function startCinematic(){
+  const sz = bounds.getSize(new THREE.Vector3());
+  H = sz.y; R1 = Math.max(sz.x, sz.z) * 1.55 + 9;
+  Object.assign(cine, { active: true, t: 0, a0: rand(-.5, .5), burst: false, burst2: false });
+  controls.enabled = false; controls.autoRotate = false;
+  clipCastle.constant = -0.01; clipScaff.constant = -0.01;
+  scaffold.visible = true; scaffold.position.y = 0; scaffMats.forEach(m => m.opacity = 1);
+  Particles.clear();
+  fps.reset();
+}
+
+function finishCinematic(){
+  cine.active = false;
+  clipCastle.constant = 1000; clipScaff.constant = 1000;
+  scaffold.visible = false;
+  renderer.toneMappingExposure = 1;
+  controls.target.set(0, H * .4, 0);
+  controls.minDistance = Math.max(6, R1 * .45);
+  controls.enabled = true; controls.autoRotate = true;
+  controls.update();
+  fps.reset(); fps.on = true;
+}
+
+function skipCinematic(){
+  if (!cine.active) return;
+  if (!cine.burst) powderBurst();
+  finishCinematic();
+}
+
+function camAt(t){
+  const k = easeOut(clamp01(t / 4.2));
+  const a = cine.a0 + 1.05 * easeInOut(clamp01(t / CINE_END));
+  let r = lerp(52, R1, k), y = lerp(34, R1 * .52 + H * .3, k);
+  if (t > BURST_AT){ const p = Math.sin(clamp01((t - BURST_AT) / 1.6) * Math.PI); r *= 1 - .07 * p; }
+  camera.position.set(Math.sin(a) * r, y, Math.cos(a) * r);
+  camera.lookAt(0, H * lerp(.25, .4, k), 0);
+}
+
+function powderBurst(){
+  const c = bounds.getCenter(new THREE.Vector3()), sz = bounds.getSize(new THREE.Vector3());
+  for (let i = 0; i < 650; i++){
+    const x = rand(bounds.min.x, bounds.max.x), z = rand(bounds.min.z, bounds.max.z), y = rand(H * .35, H * 1.02);
+    const dx = x - c.x, dz = z - c.z, dl = Math.hypot(dx, dz) || 1, sp = rand(2.5, 8);
+    Particles.spawn({ x, y, z, vx: dx/dl * sp + rand(-1, 1), vy: rand(1.5, 5.5), vz: dz/dl * sp + rand(-1, 1),
+      color: POWDER[i % POWDER.length], size: rand(1.1, 2.3) * Math.max(1, sz.x / 12), grow: rand(2, 3.5),
+      life: rand(2.4, 4), alpha: rand(.6, .9), drag: 1.7, lift: .5 });
+  }
+}
+function powderBurst2(){
+  for (let i = 0; i < 260; i++){
+    const a = Math.random() * 6.28, sp = rand(3, 9);
+    Particles.spawn({ x: rand(-1.5, 1.5), y: H * 1.05, z: rand(-1.5, 1.5), vx: Math.cos(a) * sp, vy: rand(4, 9), vz: Math.sin(a) * sp,
+      color: POWDER[(i * 3) % POWDER.length], size: rand(.9, 1.8), grow: rand(2, 3),
+      life: rand(2.2, 3.4), alpha: rand(.55, .85), drag: 1.5, lift: -.4 });
+  }
+}
+function dust(level){
+  const b = bounds, pad = .5;
+  for (let i = 0; i < 3; i++){
+    const side = Math.floor(Math.random() * 4), t = Math.random();
+    const x = side < 2 ? lerp(b.min.x, b.max.x, t) : (side === 2 ? b.min.x - pad : b.max.x + pad);
+    const z = side >= 2 ? lerp(b.min.z, b.max.z, t) : (side === 0 ? b.min.z - pad : b.max.z + pad);
+    Particles.spawn({ x, y: Math.max(.2, level - rand(0, .6)), z, vx: rand(-.6, .6), vy: rand(.2, .9), vz: rand(-.6, .6),
+      color: DUST[i % DUST.length], size: rand(.7, 1.5), grow: 1.6, life: rand(1.2, 2), alpha: .38, drag: 1.2, lift: .25 });
+  }
+}
+
+function updateCinematic(dt){
+  cine.t += dt;
+  const t = cine.t;
+  camAt(t);
+  const p = clamp01((t - BUILD_START) / (BUILD_END - BUILD_START));
+  const level = (H + .3) * easeInOut(p);
+  clipCastle.constant = t < BUILD_START ? -0.01 : level;
+  clipScaff.constant = Math.min(H * 1.05, (H + 1.5) * clamp01((t - .15) / (BUILD_END - .8)) + .3);
+  if (t > BUILD_START && t < BUILD_END) dust(level);
+  if (!cine.burst && t >= BURST_AT){ cine.burst = true; powderBurst(); clipCastle.constant = 1000; }
+  if (!cine.burst2 && t >= BURST_AT + .45){ cine.burst2 = true; powderBurst2(); }
+  if (t >= BURST_AT){
+    const f = clamp01((t - BURST_AT) / .9);
+    scaffMats.forEach(m => m.opacity = 1 - f);
+    scaffold.position.y = -f * .8;
+    if (f >= 1) scaffold.visible = false;
+    const e = clamp01((t - BURST_AT) / 1.2);
+    renderer.toneMappingExposure = 1 + .28 * Math.sin(e * Math.PI);
+  }
+  if (t >= CINE_END) finishCinematic();
+}
+
+/* ================= INFOS ================= */
+let modelInfo = '';
+const fps = { on: false, n: 0, t: 0, val: 0, reset(){ this.on = false; this.n = 0; this.t = 0; this.val = 0; } };
+function showInfo(){
+  $('#info').textContent = modelInfo + (fps.val ? ' · ≈ ' + fps.val + ' images/s' : '');
+}
+let hintShown = true;
+function hideHint(){ if (hintShown){ hintShown = false; $('#hint').style.opacity = 0; } }
+
+$('#replay').addEventListener('click', () => { if (castle) startCinematic(); });
+renderer.domElement.addEventListener('pointerdown', () => { if (cine.active) skipCinematic(); });
+
+/* ================= BOUCLE ================= */
+function resize(){
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.fov = w < h ? 50 : 40;
+  camera.updateProjectionMatrix();
+  Particles.setScale(h);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), .05);
+  if (cine.active) updateCinematic(dt);
+  else controls.update(dt);
+  Particles.update(dt);
+  if (flagObj) flagObj.rotation.y = Math.sin(performance.now() / 300) * .35;
+  if (fps.on){
+    fps.n++; fps.t += dt;
+    if (fps.t >= 3){ fps.val = Math.round(fps.n / fps.t); fps.n = 0; fps.t = 0; showInfo(); }
+  }
+  renderer.render(scene, camera);
+});
+
+loadFromSite().finally(() => {
+  window.__ready = true;
+  const l = $('#load'); l.style.opacity = 0; setTimeout(() => l.remove(), 800);
+});
+setTimeout(hideHint, 14000);
+</script>
+</body>
+</html>

@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#2b1d12">
+<title>Mon Village</title>
+<style>
+:root{--bg:#1e1610;--card:#2d2118;--card2:#3a2b1f;--line:#5a4430;--txt:#f1e6d0;--mut:#b9a888;--gold:#e0b45a;--ok:#7fb069;--bad:#d8624f}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--txt);font-family:Georgia,"Times New Roman",serif}
+body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+#view{max-width:720px;margin:0 auto;padding:12px}
+h1,h2,h3{margin:0 0 8px;font-weight:normal;letter-spacing:.3px}
+h2{font-size:20px;color:var(--gold)}
+h3{font-size:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.mut{color:var(--mut);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+input,select,textarea{width:100%;padding:11px;border-radius:8px;border:1px solid var(--line);background:#1a120c;color:var(--txt);font:inherit;font-size:16px}
+button{font:inherit;font-size:15px;padding:11px 14px;border-radius:10px;border:1px solid var(--gold);background:var(--gold);color:#2b1d12;cursor:pointer}
+button.sec{background:transparent;color:var(--gold)}
+button.sm{padding:6px 10px;font-size:13px}
+button:disabled{opacity:.4}
+button.full{width:100%;margin-top:12px}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#150f0a;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;background:transparent;border:0;color:var(--mut);border-radius:0;padding:9px 2px;font-size:11px}
+nav button span{display:block;font-size:20px}
+nav button.on{color:var(--gold)}
+canvas{width:100%;height:auto;border-radius:12px;border:1px solid var(--line);display:block;background:#3d5a2c}
+.bar{height:14px;border-radius:7px;background:#1a120c;border:1px solid var(--line);overflow:hidden;position:relative}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#8a6a2a,var(--gold))}
+.ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:3px}
+.chip{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--card2);border:1px solid var(--line);font-size:13px;margin:0 4px 4px 0}
+.chip.g{border-color:var(--gold);color:var(--gold)}
+.list>div{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.list>div:last-child{border:0}
+.big{font-size:26px;color:var(--gold)}
+#toast{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));background:#0f0a06;border:1px solid var(--gold);color:var(--txt);padding:12px;border-radius:10px;z-index:9;display:none;text-align:center}
+.res{border-color:var(--gold);background:#33261a}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grid>div{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center;font-size:12px}
+.grid .e{font-size:28px}
+.lock{opacity:.45}
+.opt{display:flex;justify-content:space-between;align-items:center;padding:8px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px}
+.opt.sel{border-color:var(--gold);background:#33261a}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<nav id="nav"></nav>
+<div id="toast"></div>
+<script>
+'use strict';
+/* ====================== DONNÉES FIXES ====================== */
+const KEY = 'village-sport-v1';
+const W = 1200, H = 900, CX = 600, CY = 470, HS = 104, YS = 0.66;
+
+const TIERS = [
+  {n:'Hameau', from:0}, {n:'Village', from:25}, {n:'Bourg', from:50}, {n:'Cité', from:75}
+];
+
+/* un bâtiment tous les 5 % de l'objectif ; id = nom de fichier d'image (assets/buildings/<id>.png) */
+const BUILDINGS = [
+  {id:'maison',      nom:'Maison',            pct:0,   e:'🏠'},
+  {id:'puits',       nom:'Puits',             pct:5,   e:'⛲'},
+  {id:'druide',      nom:'Hutte du druide',   pct:10,  e:'🛖'},
+  {id:'ferme',       nom:'Ferme',             pct:15,  e:'🌾'},
+  {id:'potager',     nom:'Potager',           pct:20,  e:'🥕'},
+  {id:'boucherie',   nom:'Boucherie',         pct:25,  e:'🥩'},
+  {id:'eglise',      nom:'Église',            pct:30,  e:'⛪'},
+  {id:'ecurie',      nom:'Écurie',            pct:35,  e:'🐴'},
+  {id:'moulin',      nom:'Moulin',            pct:40,  e:'⚙️'},
+  {id:'forge',       nom:'Forge',             pct:45,  e:'⚒️'},
+  {id:'marche',      nom:'Marché',            pct:50,  e:'🧺'},
+  {id:'auberge',     nom:'Auberge',           pct:55,  e:'🍺'},
+  {id:'boulangerie', nom:'Boulangerie',       pct:60,  e:'🥖'},
+  {id:'tour',        nom:'Tour de guet',      pct:65,  e:'🗼'},
+  {id:'halle',       nom:'Halle',             pct:70,  e:'🏬'},
+  {id:'beffroi',     nom:'Beffroi',           pct:75,  e:'🔔'},
+  {id:'scriptorium', nom:'Scriptorium',       pct:80,  e:'📜'},
+  {id:'lice',        nom:'Lice de tournoi',   pct:85,  e:'🏇'},
+  {id:'cathedrale',  nom:'Cathédrale',        pct:90,  e:'🏛️'},
+  {id:'pont',        nom:'Pont de pierre',    pct:95,  e:'🌉'},
+  {id:'chateau',     nom:'Château',           pct:100, e:'🏰'}
+];
+
+const SPORTS = ['Marche','Randonnée','Course à pied','Vélo','Natation','Musculation','Badminton','Ring Fit Adventure','Yoga / étirements','Autre'];
+
+/* petite affinité : l'activité de prédilection donne un léger bonus */
+const AFFINITE = {
+  druide:  ['Marche','Randonnée','Course à pied'],
+  pretre:  ['Randonnée','Yoga / étirements'],
+  boucher: ['Vélo','Natation','Musculation']
+};
+
+const ESPECES = [
+  {id:'lievre',  nom:'Lièvre',  e:'🐇', min:0},
+  {id:'renard',  nom:'Renard',  e:'🦊', min:0},
+  {id:'cerf',    nom:'Cerf',    e:'🦌', min:0},
+  {id:'sanglier',nom:'Sanglier',e:'🐗', min:1},
+  {id:'hibou',   nom:'Hibou',   e:'🦉', min:1},
+  {id:'loup',    nom:'Loup',    e:'🐺', min:2},
+  {id:'ours',    nom:'Ours',    e:'🐻', min:3},
+  {id:'aigle',   nom:'Aigle',   e:'🦅', min:3}
+];
+
+const BUTIN = [
+  {nom:'Cuissot de sanglier fumé', k:'viande', e:'🍖', min:0},
+  {nom:'Gibier de ferme',          k:'viande', e:'🥩', min:0},
+  {nom:'Filet de cerf',            k:'viande', e:'🍖', min:1},
+  {nom:'Hachoir en acier',         k:'outil',  e:'🔪', min:0},
+  {nom:'Pierre à aiguiser',        k:'outil',  e:'🪨', min:1},
+  {nom:'Scie de maître',           k:'outil',  e:'🪚', min:2},
+  {nom:'Couteau de chasse damassé',k:'outil',  e:'🗡️', min:3}
+];
+
+const BENEDICTIONS = [
+  'Le prêtre prie pour votre courage : le village se sent plus fort.',
+  'Une cloche sonne, tout le monde se remet au travail.',
+  'Le prêtre bénit les récoltes et les sportifs du village.',
+  'Un moment de calme, le village respire.'
+];
+
+/* boutique cosmétique */
+const BOUTIQUE = {
+  routes:  {nom:'Routes',   opts:[{id:'terre',nom:'Chemin de terre',cout:0,c:'#8a6b45'},{id:'cailloux',nom:'Route en cailloux',cout:10,c:'#9a9588'},{id:'pavee',nom:'Route pavée',cout:25,c:'#7d7a78'},{id:'dalles',nom:'Grandes dalles',cout:50,c:'#b9b3a7'}]},
+  toits:   {nom:'Toits',    opts:[{id:'chaume',nom:'Chaume',cout:0,c:'#c9a45c'},{id:'tuile',nom:'Tuiles rouges',cout:12,c:'#b5523b'},{id:'ardoise',nom:'Ardoise',cout:25,c:'#5b6575'}]},
+  banniere:{nom:'Bannières',opts:[{id:'rouge',nom:'Rouge',cout:0,c:'#b3261e'},{id:'bleu',nom:'Bleu',cout:8,c:'#2a5ca8'},{id:'vert',nom:'Vert',cout:8,c:'#2f7d3a'},{id:'violet',nom:'Violet',cout:15,c:'#6b3fa0'},{id:'noir',nom:'Noir et or',cout:25,c:'#1b1b1b'}]}
+};
+
+/* ====================== OUTILS ====================== */
+const $ = s => document.querySelector(s);
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
+function today(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function weekKey(ds){
+  const d = new Date(ds+'T12:00:00');
+  const day = (d.getDay()+6)%7;
+  d.setDate(d.getDate()-day+3);
+  const y = d.getFullYear();
+  const jan4 = new Date(y,0,4);
+  const wk = 1 + Math.round(((d - jan4)/86400000 - 3 + ((jan4.getDay()+6)%7))/7);
+  return y+'-W'+String(wk).padStart(2,'0');
+}
+function frDate(ds){ const [y,m,d] = ds.split('-'); return d+'/'+m+'/'+y; }
+function rng(seed){ let a = seed>>>0; return function(){ a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a>>>15, 1|a); t = t + Math.imul(t ^ t>>>7, 61|t) ^ t; return ((t ^ t>>>14)>>>0)/4294967296; }; }
+function pick(arr, r){ return arr[Math.floor(r()*arr.length)]; }
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(()=>t.style.display='none', 3800); }
+
+/* ====================== ÉTAT ====================== */
+let S = load();
+function blank(){ return {
+  profile:null, weighins:{}, sessions:[], bonusCosm:0, spentCosm:0, trips:0,
+  animaux:[], butin:[], owned:{routes:['terre'],toits:['chaume'],banniere:['rouge']}, sel:{routes:'terre',toits:'chaume',banniere:'rouge'}
+}; }
+function load(){
+  try { const j = JSON.parse(localStorage.getItem(KEY)); if (j) return Object.assign(blank(), j); } catch(e){}
+  return blank();
+}
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e){ toast('Sauvegarde impossible sur ce navigateur'); } }
+
+/* ====================== LOGIQUE DE PROGRESSION ====================== */
+function pctOf(start, cur, target){
+  if (start==null || cur==null || target==null || start===target) return null;
+  return clamp((cur - start)/(target - start), 0, 1);
+}
+function pctForWeighin(w){
+  const p = S.profile; if (!p) return 0;
+  const a = pctOf(p.startWeight, w.weight, p.targetWeight);
+  const b = (p.startFat!=null && p.targetFat!=null && w.fat!=null) ? pctOf(p.startFat, w.fat, p.targetFat) : null;
+  const arr = [a,b].filter(x => x!==null);
+  return arr.length ? 100*arr.reduce((s,x)=>s+x,0)/arr.length : 0;
+}
+/* le village ne recule jamais : on garde la meilleure progression atteinte */
+function globalPct(){
+  let best = 0; for (const k in S.weighins) best = Math.max(best, pctForWeighin(S.weighins[k])); return best;
+}
+function renforts(){
+  const p = S.profile; if (!p || p.startMuscle==null) return 0;
+  let best = 0; for (const k in S.weighins){ const m = S.weighins[k].muscle; if (m!=null) best = Math.max(best, m - p.startMuscle); }
+  return clamp(Math.floor(best/0.5), 0, 3);
+}
+const tierIndex = pct => { let t = 0; TIERS.forEach((x,i)=>{ if (pct >= x.from) t = i; }); return t; };
+const built = pct => BUILDINGS.filter(b => pct >= b.pct - 1e-9);
+const hasB = (id, pct) => BUILDINGS.find(b=>b.id===id).pct <= pct + 1e-9;
+
+function tokensLeft(s){ return s.tokens - (s.used||0); }
+function totalTokens(){ return S.sessions.reduce((n,s)=>n+tokensLeft(s),0); }
+function cosmDispo(){ return S.sessions.reduce((n,s)=>n+s.cosm,0) + S.bonusCosm - S.spentCosm; }
+function takeToken(role){
+  const aff = AFFINITE[role];
+  const avail = S.sessions.filter(s => tokensLeft(s) > 0).sort((a,b)=>a.date<b.date?-1:1);
+  if (!avail.length) return null;
+  const s = avail.find(x => aff.includes(x.act)) || avail[0];
+  s.used = (s.used||0) + 1;
+  return {s, affinite: aff.includes(s.act)};
+}
+
+/* ====================== ACTIONS ====================== */
+function actionDruide(){
+  const t = takeToken('druide'); if (!t) return null;
+  S.trips++;
+  const niveau = Math.min(5, 1 + Math.floor((S.trips-1)/5));
+  const score = niveau - 1 + (t.affinite?1:0) + (t.s.min>=60?1:0);
+  const r = Math.random;
+  const p3 = Math.min(0.25, 0.03*score), p2 = Math.min(0.5, 0.08*(score+1));
+  const x = r(); const etoiles = x<p3 ? 3 : x<p3+p2 ? 2 : 1;
+  const pool = ESPECES.filter(e => e.min <= score + (etoiles-1));
+  const poids = pool.map(e => 1/(1+e.min));
+  let tot = poids.reduce((a,b)=>a+b,0), y = r()*tot, esp = pool[0];
+  for (let i=0;i<pool.length;i++){ y -= poids[i]; if (y<=0){ esp = pool[i]; break; } }
+  S.animaux.push({sp:esp.id, stars:etoiles, date:today()});
+  save();
+  const txt = etoiles===3 ? 'Un spécimen exceptionnel !' : etoiles===2 ? (esp.id==='cerf'?'Un cerf aux beaux bois !':'Un animal à la robe remarquable.') : 'Un animal commun, mais bienvenu.';
+  return {titre:`${esp.e} ${esp.nom} ${'★'.repeat(etoiles)}`, texte:`Le druide rentre de la forêt avec un nouveau compagnon. ${txt}`, aff:t.affinite, s:t.s};
+}
+function actionPretre(){
+  const t = takeToken('pretre'); if (!t) return null;
+  const gain = 2 + (t.affinite?1:0);
+  S.bonusCosm += gain; save();
+  return {titre:`🙏 Prière  +${gain} points cosmétiques`, texte:BENEDICTIONS[Math.floor(Math.random()*BENEDICTIONS.length)], aff:t.affinite, s:t.s};
+}
+function actionBoucher(){
+  const t = takeToken('boucher'); if (!t) return null;
+  const score = (t.affinite?1:0) + (t.s.min>=60?1:0) + Math.floor(S.butin.length/6);
+  const x = Math.random();
+  const etoiles = x < Math.min(0.2, 0.04*score) ? 3 : x < Math.min(0.5, 0.12*(score+1)) ? 2 : 1;
+  const pool = BUTIN.filter(b => b.min <= score + (etoiles-1));
+  const it = pool[Math.floor(Math.random()*pool.length)];
+  S.butin.push({nom:it.nom, k:it.k, e:it.e, stars:etoiles, date:today()}); save();
+  return {titre:`${it.e} ${it.nom} ${'★'.repeat(etoiles)}`, texte:'Le boucher revient de sa tournée avec une belle trouvaille.', aff:t.affinite, s:t.s};
+}
+
+/* ====================== IMAGES (avec repli sur des formes simples) ====================== */
+const imgCache = {};
+function getImg(path){
+  let e = imgCache[path];
+  if (!e){
+    e = imgCache[path] = {img:new Image(), ok:false, fail:false};
+    e.img.onload = () => { e.ok = true; if ($('#cv')) drawScene(); };
+    e.img.onerror = () => { e.fail = true; };
+    e.img.src = path;
+  }
+  return e.ok ? e.img : null;
+}
+function getBuildingImg(id){
+  return getImg(`assets/buildings/${id}_${S.sel.toits}.png`) || getImg(`assets/buildings/${id}.png`);
+}
+
+/* ====================== PLAN HEXAGONAL ====================== */
+function hexPx(q, r){ return {x: CX + HS*Math.sqrt(3)*(q + r/2), y: CY + HS*1.5*r*YS}; }
+function ring(k){
+  if (k===0) return [[0,0]];
+  const dirs = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+  let q = -k, r = k; const out = [];
+  for (let i=0;i<6;i++) for (let j=0;j<k;j++){ out.push([q,r]); q += dirs[i][0]; r += dirs[i][1]; }
+  return out;
+}
+let layout = null;
+function getLayout(){
+  const seed = S.profile ? (S.profile.seed||1) : 1;
+  if (layout && layout.seed === seed) return layout;
+  const r = rng(seed);
+  const shuf = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){ const j = Math.floor(r()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; };
+  const r3 = shuf(ring(3));
+  const slots = [].concat(ring(0), shuf(ring(1)), shuf(ring(2)), r3.slice(0,2));
+  const pasture = r3.slice(2);
+  layout = {seed, bslots: slots.map(([q,r_]) => hexPx(q,r_)), pasture: pasture.map(([q,r_]) => hexPx(q,r_))};
+  return layout;
+}
+
+/* ====================== DESSIN ====================== */
+let baseCv = null, baseSeed = null;
+function baseGround(){
+  const seed = S.profile ? (S.profile.seed||1) : 1;
+  if (baseCv && baseSeed === seed) return baseCv;
+  baseSeed = seed;
+  baseCv = document.createElement('canvas'); baseCv.width = W; baseCv.height = H;
+  const c = baseCv.getContext('2d'), r = rng(seed+7);
+  let g = c.createLinearGradient(0,0,0,H); g.addColorStop(0,'#46662f'); g.addColorStop(1,'#35502a');
+  c.fillStyle = g; c.fillRect(0,0,W,H);
+  for (let i=0;i<260;i++){ c.fillStyle = `rgba(${60+r()*40|0},${100+r()*50|0},${40+r()*30|0},.35)`; c.beginPath(); c.ellipse(r()*W, r()*H, 30+r()*70, 12+r()*30, 0, 0, 7); c.fill(); }
+  g = c.createRadialGradient(CX,CY+10,60,CX,CY+10,600); g.addColorStop(0,'rgba(120,160,70,.55)'); g.addColorStop(1,'rgba(120,160,70,0)');
+  c.fillStyle = g; c.beginPath(); c.ellipse(CX,CY+10,575,345,0,0,7); c.fill();
+  for (let i=0;i<70;i++){
+    const x = r()*W, y = r()*H; const dx = (x-CX)/640, dy = (y-CY-10)/380;
+    if (dx*dx+dy*dy < 1.05) continue;
+    c.fillStyle = '#1f3b1c'; c.beginPath(); c.arc(x, y, 18+r()*12, 0, 7); c.fill();
+    c.fillStyle = '#2b4f26'; c.beginPath(); c.arc(x-4, y-6, 12+r()*8, 0, 7); c.fill();
+  }
+  return baseCv;
+}
+
+function drawWall(c, tier, part){
+  const img = getImg(`assets/walls/wall_${tier+1}.png`);
+  if (img){ if (part==='back') c.drawImage(img,0,0,W,H); return; }
+  const n = [64,56,64,72][tier], rx = 565, ry = 335, cx = CX, cy = CY+10;
+  for (let i=0;i<n;i++){
+    const a = i/n*2*Math.PI, front = Math.sin(a) >= 0;
+    if ((part==='front') !== front) continue;
+    if (Math.abs(a - Math.PI/2) < 0.16) continue;
+    const x = cx + rx*Math.cos(a), y = cy + ry*Math.sin(a);
+    if (tier <= 1){
+      const h = tier===0 ? 46 : 60, w = tier===0 ? 14 : 17;
+      if (tier===1){ c.fillStyle = '#8e8a82'; c.fillRect(x-w/2-2, y-14, w+4, 14); }
+      c.fillStyle = i%2 ? '#7a4f27' : '#8a5a2b'; c.fillRect(x-w/2, y-h, w, h-(tier===1?14:0));
+      c.beginPath(); c.moveTo(x-w/2, y-h); c.lineTo(x, y-h-12); c.lineTo(x+w/2, y-h); c.fill();
+    } else {
+      const h = tier===2 ? 46 : 62, w = 26;
+      c.fillStyle = i%2 ? '#8f8b82' : '#a39f95'; c.fillRect(x-w/2, y-h, w, h);
+      c.fillStyle = '#6f6b63'; c.fillRect(x-w/2, y-h-6, 8, 6); c.fillRect(x+w/2-8, y-h-6, 8, 6);
+      if (tier===3 && i%9===0){
+        c.fillStyle = '#9b978d'; c.fillRect(x-20, y-h-34, 40, h+34);
+        c.fillStyle = '#6a665e'; for (let k=0;k<3;k++) c.fillRect(x-20+k*15, y-h-44, 10, 10);
+        c.fillStyle = '#2a2018'; c.fillRect(x-4, y-h-14, 8, 16);
+      }
+    }
+  }
+  if (part==='front'){
+    const x = cx, y = cy + ry;
+    c.fillStyle = tier<=1 ? '#6b4423' : '#8a867d';
+    c.fillRect(x-62, y-72, 18, 72); c.fillRect(x+44, y-72, 18, 72); c.fillRect(x-62, y-84, 124, 14);
+    c.fillStyle = 'rgba(20,12,6,.55)'; c.fillRect(x-44, y-70, 88, 70);
+  }
+}
+
+function drawRoads(c, pct){
+  const L = getLayout(), road = BOUTIQUE.routes.opts.find(o=>o.id===S.sel.routes) || BOUTIQUE.routes.opts[0];
+  const img = getImg(`assets/roads/route_${S.sel.routes}.png`);
+  if (img){ c.drawImage(img,0,0,W,H); return; }
+  const n = built(pct).length;
+  const gate = {x:CX, y:CY+10+335-4};
+  const seg = (a, b) => {
+    const mx = (a.x+b.x)/2 + (a.y-b.y)*0.12, my = (a.y+b.y)/2 + (b.x-a.x)*0.08;
+    c.beginPath(); c.moveTo(a.x, a.y+14); c.quadraticCurveTo(mx, my+14, b.x, b.y+14); c.stroke();
+  };
+  c.lineCap = 'round';
+  c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 20;
+  for (let i=1;i<n;i++) seg(L.bslots[i], L.bslots[0]);
+  seg(gate, L.bslots[0]);
+  c.strokeStyle = road.c; c.lineWidth = 14;
+  for (let i=1;i<n;i++) seg(L.bslots[i], L.bslots[0]);
+  seg(gate, L.bslots[0]);
+}
+
+function drawBuilding(c, b, p, lvl){
+  const img = getBuildingImg(b.id);
+  if (img){ c.drawImage(img, p.x-96, p.y+36-192, 192, 192); }
+  else {
+    const toit = BOUTIQUE.toits.opts.find(o=>o.id===S.sel.toits) || BOUTIQUE.toits.opts[0];
+    c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(p.x+6, p.y+20, 70, 34, 0, 0, 7); c.fill();
+    c.fillStyle = '#6b6258'; c.beginPath(); c.ellipse(p.x, p.y+14, 66, 33, 0, 0, 7); c.fill();
+    c.fillStyle = toit.c; c.beginPath(); c.ellipse(p.x, p.y+8, 62, 30, 0, 0, 7); c.fill();
+    if (lvl>0){ c.strokeStyle = '#e0b45a'; c.lineWidth = 2*lvl; c.beginPath(); c.ellipse(p.x, p.y+8, 62, 30, 0, 0, 7); c.stroke(); }
+    c.font = '54px serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#000';
+    c.fillText(b.e, p.x, p.y-14);
+  }
+}
+
+function animalSpots(pct){
+  const L = getLayout(), out = [], P = L.pasture;
+  let i = 0; const add = (e, files) => { if (i < P.length){ const r = rng(i*13+5); out.push({e, files, x:P[i].x + (r()-.5)*70, y:P[i].y + (r()-.5)*30}); i++; } };
+  if (hasB('ferme', pct)){ [['🐑','mouton'],['🐄','vache'],['🐔','poule']].forEach(a=>add(a[0], [a[1]])); }
+  if (hasB('ecurie', pct)){ add('🐎',['cheval']); add('🐎',['cheval']); }
+  const seen = {};
+  S.animaux.forEach(a => { const k = a.sp+a.stars; if (!seen[k]){ seen[k] = 1; const sp = ESPECES.find(e=>e.id===a.sp); add(sp.e + (a.stars>1 ? '✨' : ''), a.stars>1 ? [`${a.sp}_${a.stars}`, a.sp] : [a.sp]); } });
+  return out;
+}
+
+function drawScene(){
+  const cv = $('#cv'); if (!cv) return;
+  const c = cv.getContext('2d'); c.clearRect(0,0,W,H);
+  const pct = globalPct(), tier = tierIndex(pct), L = getLayout(), lvl = renforts();
+  const g = getImg('assets/ground.png'); c.drawImage(g || baseGround(), 0, 0, W, H);
+  drawWall(c, tier, 'back');
+  drawRoads(c, pct);
+  const items = [];
+  built(pct).forEach((b,i) => items.push({y:L.bslots[i].y, f:()=>drawBuilding(c, b, L.bslots[i], lvl)}));
+  animalSpots(pct).forEach(a => items.push({y:a.y, f:()=>{
+    let im = null; for (const f of a.files){ im = getImg(`assets/animals/${f}.png`); if (im) break; }
+    if (im) c.drawImage(im, a.x-52, a.y-84, 104, 104);
+    else { c.font='34px serif'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(a.e, a.x, a.y); }
+  }}));
+  items.sort((a,b)=>a.y-b.y).forEach(it=>it.f());
+  drawWall(c, tier, 'front');
+  const ban = BOUTIQUE.banniere.opts.find(o=>o.id===S.sel.banniere) || BOUTIQUE.banniere.opts[0];
+  [-84, 84].forEach(dx => {
+    const x = CX+dx, y = CY+10+335-90;
+    c.fillStyle = '#5a4430'; c.fillRect(x-2, y-70, 4, 74);
+    c.fillStyle = ban.c; c.beginPath(); c.moveTo(x+2, y-68); c.lineTo(x+40, y-56); c.lineTo(x+2, y-42); c.fill();
+    if (ban.id==='noir'){ c.fillStyle = '#e0b45a'; c.fillRect(x+10, y-58, 14, 4); }
+  });
+}
+
+/* ====================== INTERFACE ====================== */
+const TABS = [['village','🏰','Village'],['seance','🏃','Séance'],['pesee','⚖️','Pesée'],['actions','⚔️','Actions'],['boutique','🎨','Boutique']];
+let tab = 'village', lastResult = null;
+
+function nav(){
+  $('#nav').innerHTML = S.profile ? TABS.map(t => `<button data-t="${t[0]}" class="${tab===t[0]?'on':''}"><span>${t[1]}</span>${t[2]}</button>`).join('') : '';
+  document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; lastResult = null; render(); window.scrollTo(0,0); });
+}
+function render(){
+  nav();
+  if (!S.profile){ viewSetup(); return; }
+  ({village:viewVillage, seance:viewSeance, pesee:viewPesee, actions:viewActions, boutique:viewBoutique})[tab]();
+}
+
+/* --- réglages de départ --- */
+function viewSetup(){
+  $('#view').innerHTML = `
+  <h2>Bienvenue dans votre village</h2>
+  <div class="card"><div class="mut">Un village médiéval, entouré de palissades, que vous remplissez en vous rapprochant de votre objectif. Ces valeurs forment votre pesée zéro.</div>
+    <label>Prénom</label><input id="f-nom" autocomplete="off">
+    <label>Profil</label><select id="f-sexe"><option value="H">Homme</option><option value="F">Femme</option></select>
+    <div class="row"><div class="grow"><label>Taille (cm)</label><input id="f-taille" inputmode="decimal"></div>
+    <div class="grow"><label>Poids de départ (kg)</label><input id="f-pd" inputmode="decimal"></div></div>
+    <div class="row"><div class="grow"><label>Taux de graisse de départ (%)</label><input id="f-gd" inputmode="decimal"></div>
+    <div class="grow"><label>Masse musculaire (kg, facultatif)</label><input id="f-md" inputmode="decimal"></div></div>
+    <h3 style="margin-top:14px">Votre objectif</h3>
+    <div class="row"><div class="grow"><label>Poids cible (kg)</label><input id="f-pc" inputmode="decimal"></div>
+    <div class="grow"><label>Taux de graisse cible (%)</label><input id="f-gc" inputmode="decimal"></div></div>
+    <div class="mut" style="margin-top:6px">Le village est terminé quand l'objectif est atteint. Le taux de graisse est facultatif : sans lui, seul le poids compte.</div>
+    <button class="full" id="f-ok">Poser la première palissade</button></div>`;
+  $('#f-ok').onclick = () => {
+    const p = {nom:$('#f-nom').value.trim(), sexe:$('#f-sexe').value, taille:num($('#f-taille').value), startWeight:num($('#f-pd').value), startFat:num($('#f-gd').value), startMuscle:num($('#f-md').value), targetWeight:num($('#f-pc').value), targetFat:num($('#f-gc').value), date:today(), seed:Math.floor(Math.random()*1e9)};
+    if (!p.nom || p.startWeight==null || p.targetWeight==null || p.taille==null) return toast('Prénom, taille, poids de départ et poids cible sont obligatoires');
+    if (p.startWeight === p.targetWeight) return toast('Le poids cible doit être différent du poids de départ');
+    if ((p.startFat==null) !== (p.targetFat==null)){ p.startFat = null; p.targetFat = null; }
+    layout = null; S = Object.assign(blank(), {profile:p}); save(); tab = 'village'; render();
+  };
+}
+
+/* --- village --- */
+function viewVillage(){
+  const pct = globalPct(), t = tierIndex(pct), bl = built(pct), next = BUILDINGS.find(b => b.pct > pct + 1e-9);
+  const w = Object.keys(S.weighins).sort().pop();
+  $('#view').innerHTML = `
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">${TIERS[t].n} de ${esc(S.profile.nom)}</h2><div class="big">${pct.toFixed(0)} %</div></div>
+  <div class="card" style="margin-top:8px">
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="ticks">${TIERS.map(x=>`<span>${x.n}</span>`).join('')}<span>Objectif</span></div>
+    <div class="mut" style="margin-top:8px">${next ? `Prochain bâtiment : <b>${next.nom}</b> à ${next.pct} %` : '🏰 Le village est terminé : objectif atteint !'}${w?'':'<br>Faites votre première pesée pour voir le village grandir.'}</div>
+  </div>
+  <canvas id="cv" width="${W}" height="${H}"></canvas>
+  <div class="card" style="margin-top:12px"><div class="row">
+    <span class="chip g">⚔️ ${totalTokens()} point(s) d'action</span><span class="chip g">🎨 ${cosmDispo()} point(s) cosmétiques</span>
+    ${renforts()?`<span class="chip g">🛡️ Renforts niv. ${renforts()}</span>`:''}</div>
+    <div class="mut" style="margin-top:6px">${bl.length} bâtiment(s) • ${S.animaux.length} animal(aux) ramené(s)</div></div>`;
+  drawScene();
+  $('#cv').onclick = ev => {
+    const r = $('#cv').getBoundingClientRect(), x = (ev.clientX-r.left)*W/r.width, y = (ev.clientY-r.top)*H/r.height, L = getLayout();
+    let best = null, bd = 1e9; bl.forEach((b,i) => { const d = Math.hypot(L.bslots[i].x-x, L.bslots[i].y-40-y); if (d<bd){ bd = d; best = b; } });
+    if (best && bd < 80) toast(`${best.e} ${best.nom}`);
+  };
+}
+
+/* --- séance --- */
+function viewSeance(){
+  const recent = S.sessions.slice().sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
+  $('#view').innerHTML = `
+  <h2>Nouvelle séance</h2>
+  <div class="card">
+    <label>Activité</label><select id="s-act">${SPORTS.map(s=>`<option>${s}</option>`).join('')}</select>
+    <div class="row"><div class="grow"><label>Durée (minutes)</label><input id="s-min" inputmode="numeric"></div>
+    <div class="grow"><label>Kilocalories (facultatif)</label><input id="s-kcal" inputmode="numeric"></div></div>
+    <label>Date</label><input id="s-date" type="date" value="${today()}">
+    <div class="mut" style="margin-top:8px">1 point d'action par séance, 2 si elle dure 45 minutes ou plus. Les points cosmétiques augmentent avec les calories (ou la durée si vous ne les connaissez pas).</div>
+    <button class="full" id="s-ok">Enregistrer la séance</button></div>
+  <h3>Dernières séances</h3>
+  <div class="card list">${recent.length ? recent.map(s=>`<div><span>${frDate(s.date)} • ${esc(s.act)} • ${s.min} min${s.kcal?` • ${s.kcal} kcal`:''}<br><span class="mut">⚔️ ${s.tokens} • 🎨 ${s.cosm}</span></span><button class="sec sm" data-del="${s.id}">✕</button></div>`).join('') : '<div class="mut">Aucune séance pour l\'instant.</div>'}</div>`;
+  $('#s-ok').onclick = () => {
+    const min = num($('#s-min').value), kcal = num($('#s-kcal').value), date = $('#s-date').value || today();
+    if (!min || min <= 0) return toast('Indiquez la durée en minutes');
+    const tokens = 1 + (min >= 45 ? 1 : 0), cosm = kcal ? 1 + Math.floor(kcal/200) : 1 + Math.floor(min/30);
+    S.sessions.push({id:Date.now(), date, act:$('#s-act').value, min, kcal:kcal||null, tokens, used:0, cosm});
+    save(); toast(`Séance enregistrée : +${tokens} action, +${cosm} cosmétique`); viewSeance();
+  };
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    const s = S.sessions.find(x=>x.id==b.dataset.del);
+    if (s && s.used) return toast('Des points de cette séance ont déjà été dépensés');
+    S.sessions = S.sessions.filter(x=>x.id!=b.dataset.del); save(); viewSeance();
+  });
+}
+
+/* --- pesée --- */
+function viewPesee(){
+  const p = S.profile, keys = Object.keys(S.weighins).sort().reverse(), wk = weekKey(today());
+  $('#view').innerHTML = `
+  <h2>Pesée</h2>
+  <div class="card">
+    <div class="mut">Une seule pesée compte par semaine : la dernière remplace les précédentes. Se peser plus souvent ne fait pas avancer plus vite.</div>
+    <div class="row"><div class="grow"><label>Date</label><input id="w-date" type="date" value="${today()}"></div>
+    <div class="grow"><label>Poids (kg)</label><input id="w-p" inputmode="decimal"></div></div>
+    <div class="row"><div class="grow"><label>Graisse (%)</label><input id="w-g" inputmode="decimal" ${p.startFat==null?'placeholder="non suivi"':''}></div>
+    <div class="grow"><label>Muscle (kg)</label><input id="w-m" inputmode="decimal" ${p.startMuscle==null?'placeholder="non suivi"':''}></div></div>
+    ${S.weighins[wk] ? '<div class="mut" style="margin-top:6px">Une pesée existe déjà cette semaine : elle sera remplacée.</div>' : ''}
+    <button class="full" id="w-ok">Enregistrer la pesée</button></div>
+  <div class="card"><h3>Départ (pesée zéro)</h3><div class="mut">${frDate(p.date)} • ${p.startWeight} kg${p.startFat!=null?` • ${p.startFat} %`:''}${p.startMuscle!=null?` • muscle ${p.startMuscle} kg`:''}<br>Objectif : ${p.targetWeight} kg${p.targetFat!=null?` • ${p.targetFat} %`:''}</div></div>
+  <h3>Historique</h3>
+  <div class="card list">${keys.length ? keys.map(k=>{ const w = S.weighins[k]; return `<div><span>${k} • ${frDate(w.date)}<br><span class="mut">${w.weight} kg${w.fat!=null?` • ${w.fat} %`:''}${w.muscle!=null?` • muscle ${w.muscle} kg`:''}</span></span><b>${pctForWeighin(w).toFixed(0)} %</b></div>`; }).join('') : '<div class="mut">Aucune pesée pour l\'instant.</div>'}</div>
+  <div class="card"><h3>Sauvegarde</h3><div class="mut">Les données sont dans ce navigateur. Copiez la sauvegarde de temps en temps.</div>
+    <textarea id="bk" rows="3" placeholder="Collez ici une sauvegarde pour restaurer"></textarea>
+    <div class="row" style="margin-top:8px"><button class="sec grow" id="bk-copy">Copier la sauvegarde</button><button class="sec grow" id="bk-load">Restaurer</button></div></div>`;
+  $('#w-ok').onclick = () => {
+    const date = $('#w-date').value || today(), w = {date, weight:num($('#w-p').value), fat:num($('#w-g').value), muscle:num($('#w-m').value)};
+    if (w.weight == null) return toast('Indiquez le poids');
+    const before = built(globalPct()).length, tb = tierIndex(globalPct());
+    S.weighins[weekKey(date)] = w; save();
+    const pct = globalPct(), after = built(pct);
+    let msg = `Pesée enregistrée : ${pct.toFixed(0)} % de l'objectif.`;
+    if (after.length > before) msg += ` Nouveau : ${after.slice(before).map(b=>b.e+' '+b.nom).join(', ')} !`;
+    if (tierIndex(pct) > tb) msg += ` Votre ${TIERS[tb].n.toLowerCase()} devient : ${TIERS[tierIndex(pct)].n} !`;
+    toast(msg); tab = 'village'; render();
+  };
+  $('#bk-copy').onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(S)); toast('Sauvegarde copiée'); } catch(e){ $('#bk').value = JSON.stringify(S); $('#bk').select(); toast('Copiez le texte affiché'); } };
+  $('#bk-load').onclick = () => { try { const j = JSON.parse($('#bk').value); if (!j.profile) throw 0; S = Object.assign(blank(), j); layout = null; save(); toast('Sauvegarde restaurée'); tab = 'village'; render(); } catch(e){ toast('Sauvegarde illisible'); } };
+}
+
+/* --- actions --- */
+function viewActions(){
+  const pct = globalPct(), n = totalTokens();
+  const roles = [
+    {k:'druide',  e:'🌲', nom:'Druide',  b:'druide',    txt:'Part en forêt et ramène un animal. Aime la marche et la randonnée.'},
+    {k:'pretre',  e:'🙏', nom:'Prêtre',  b:'eglise',    txt:'Prie pour le village et rapporte des points cosmétiques. Aime la randonnée et les étirements.'},
+    {k:'boucher', e:'🔪', nom:'Boucher', b:'boucherie', txt:'Cherche de la viande rare et des outils. Aime le vélo, la natation et la musculation.'}
+  ];
+  $('#view').innerHTML = `
+  <h2>Actions</h2>
+  <div class="card"><span class="big">⚔️ ${n}</span> <span class="mut">point(s) d'action disponible(s). Chaque séance en donne.</span></div>
+  ${lastResult ? `<div class="card res"><h3>${esc(lastResult.titre)}</h3><div>${esc(lastResult.texte)}</div><div class="mut" style="margin-top:6px">Point utilisé : ${esc(lastResult.s.act)}, ${lastResult.s.min} min${lastResult.aff?' • bonus d\'activité de prédilection':''}</div></div>` : ''}
+  ${roles.map(r => { const ok = hasB(r.b, pct), bn = BUILDINGS.find(x=>x.id===r.b); return `<div class="card ${ok?'':'lock'}"><div class="row"><div class="grow"><h3>${r.e} ${r.nom}</h3><div class="mut">${ok ? r.txt : `Se débloque avec : ${bn.nom} (${bn.pct} %)`}</div></div><button data-a="${r.k}" ${ok&&n>0?'':'disabled'}>Envoyer</button></div></div>`; }).join('')}
+  <h3>Registre</h3>
+  <div class="card"><div class="mut" style="margin-bottom:6px">Animaux (${S.animaux.length})</div>
+    ${S.animaux.length ? `<div class="grid">${ESPECES.map(sp => [1,2,3].map(st => { const c = S.animaux.filter(a=>a.sp===sp.id&&a.stars===st).length; return c ? `<div><div class="e">${sp.e}</div>${sp.nom}<br>${'★'.repeat(st)} ×${c}</div>` : ''; }).join('')).join('')}</div>` : '<div class="mut">Aucun animal. Envoyez le druide en forêt.</div>'}</div>
+  <div class="card"><div class="mut" style="margin-bottom:6px">Viandes et outils (${S.butin.length})</div>
+    ${S.butin.length ? `<div class="grid">${S.butin.slice().reverse().slice(0,18).map(b=>`<div><div class="e">${b.e}</div>${esc(b.nom)}<br>${'★'.repeat(b.stars)}</div>`).join('')}</div>` : '<div class="mut">Rien pour l\'instant. Envoyez le boucher.</div>'}</div>`;
+  document.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+    const f = {druide:actionDruide, pretre:actionPretre, boucher:actionBoucher}[b.dataset.a];
+    const r = f(); if (!r) return toast('Plus de point d\'action');
+    lastResult = r; viewActions(); window.scrollTo(0,0);
+  });
+}
+
+/* --- boutique --- */
+function viewBoutique(){
+  $('#view').innerHTML = `
+  <h2>Boutique</h2>
+  <div class="card"><span class="big">🎨 ${cosmDispo()}</span> <span class="mut">point(s) cosmétiques</span></div>
+  ${Object.keys(BOUTIQUE).map(cat => `<h3>${BOUTIQUE[cat].nom}</h3>` + BOUTIQUE[cat].opts.map(o => {
+    const own = S.owned[cat].includes(o.id), sel = S.sel[cat] === o.id;
+    return `<div class="opt ${sel?'sel':''}"><div class="row"><span style="display:inline-block;width:18px;height:18px;border-radius:4px;background:${o.c};border:1px solid #0006"></span><span>${o.nom}</span></div>
+      ${sel ? '<span class="mut">Actif</span>' : own ? `<button class="sec sm" data-use="${cat}|${o.id}">Utiliser</button>` : `<button class="sm" data-buy="${cat}|${o.id}" ${cosmDispo()>=o.cout?'':'disabled'}>${o.cout} pts</button>`}</div>`;
+  }).join('')).join('')}`;
+  document.querySelectorAll('[data-use]').forEach(b => b.onclick = () => { const [c,i] = b.dataset.use.split('|'); S.sel[c] = i; save(); viewBoutique(); });
+  document.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => {
+    const [c,i] = b.dataset.buy.split('|'), o = BOUTIQUE[c].opts.find(x=>x.id===i);
+    if (cosmDispo() < o.cout) return;
+    S.spentCosm += o.cout; S.owned[c].push(i); S.sel[c] = i; save(); toast(`Appliqué au village : ${o.nom}`); viewBoutique();
+  });
+}
+
+render();
+</script>
+</body>
+</html>
