@@ -434,8 +434,8 @@ function requiredPieces(layout, sc) {
 
 /* couleur du sol (vertex color) : herbe, terre des chemins, sable des berges, roche */
 function groundColor(x, z, h, ny, paths) {
-  const grassA = [0.36, 0.52, 0.2], grassB = [0.52, 0.64, 0.24], grassC = [0.62, 0.66, 0.3];
-  const dirt = [0.55, 0.43, 0.28], sand = [0.72, 0.66, 0.5], rock = [0.5, 0.48, 0.44], snow = [0.9, 0.92, 0.95];
+  const grassA = [0.34, 0.5, 0.19], grassB = [0.5, 0.63, 0.23], grassC = [0.62, 0.65, 0.3];
+  const dirt = [0.56, 0.44, 0.29], sand = [0.72, 0.66, 0.5], rock = [0.5, 0.48, 0.44], snow = [0.9, 0.92, 0.95];
   const n1 = fbm(x * 0.05 + 3, z * 0.05 + 9, 3), n2 = fbm(x * 0.21 + 40, z * 0.21 + 2, 2);
   let c = [0, 0, 0];
   for (let i = 0; i < 3; i++) c[i] = lerp(lerp(grassA[i], grassB[i], n1), grassC[i], n2 * 0.5);
@@ -542,11 +542,11 @@ function makeDetailTexture(){
   const n = 256, cv = document.createElement('canvas'); cv.width = cv.height = n;
   const ctx = cv.getContext('2d'), img = ctx.createImageData(n, n), d = img.data;
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++){
-    const v = 0.78 + 0.32 * fbm(x * 0.11, y * 0.11, 3) + 0.08 * (Math.random() - 0.5);
+    const v = 0.66 + 0.5 * fbm(x * 0.09, y * 0.09, 3) + 0.1 * (Math.random() - 0.5);
     const i = (y * n + x) * 4; d[i] = d[i+1] = d[i+2] = clamp(v * 255, 0, 255); d[i+3] = 255;
   }
   ctx.putImageData(img, 0, 0);
-  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(70, 70); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 4;
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(150, 150); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 4;
   return t;
 }
 function buildTerrain(){
@@ -561,7 +561,7 @@ function buildTerrain(){
   const nrm = g.attributes.normal;
   for (let i = 0; i < p.count; i++){
     const c = groundColor(p.getX(i), p.getZ(i), p.getY(i), nrm.getY(i), layout.paths);
-    col[i*3] = c[0]; col[i*3+1] = c[1]; col[i*3+2] = c[2];
+    col[i*3] = Math.pow(c[0], 2.2); col[i*3+1] = Math.pow(c[1], 2.2); col[i*3+2] = Math.pow(c[2], 2.2);
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, map: makeDetailTexture(), roughness: 0.95, metalness: 0 });
@@ -1050,6 +1050,7 @@ async function main(){
   renderer.compile(scene, camera);
   renderer.setAnimationLoop(loop);
   window.__ready = true;
+  window.__v3d = { cam, applyCamera, camera, scene, renderer, startBuild, built, layout, setSun, THREE };
   const l = $('#load'); l.style.opacity = 0; setTimeout(() => l.remove(), 900);
 }
 main().catch(e => { console.error(e); fatal('Erreur au démarrage : ' + (e && e.message ? e.message : e)); });
